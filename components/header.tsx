@@ -15,6 +15,7 @@ import { SidebarMobile } from './sidebar-mobile'
 import { SidebarToggle } from './sidebar-toggle'
 import { ChatHistory } from './chat-history'
 import { Session } from '@/lib/types'
+import { ThemeToggle } from './theme-toggle'
 
 async function UserOrLogin() {
   const session = (await auth()) as Session
@@ -56,6 +57,7 @@ export function Header() {
         </React.Suspense>
       </div>
       <div className="flex items-center justify-end space-x-2">
+        <ThemeToggle />
         <a
           target="_blank"
           href="https://github.com/vercel/nextjs-ai-chatbot/"

@@ -8,7 +8,7 @@ import {
   streamUI,
   createStreamableValue
 } from 'ai/rsc'
-import { openai } from '@ai-sdk/openai'
+import { createAzure } from '@ai-sdk/azure'
 
 import {
   spinner,
@@ -16,6 +16,7 @@ import {
   BotMessage,
   SystemMessage,
   Stock,
+  Stocks,
   Purchase
 } from '@/components/stocks'
 
@@ -23,7 +24,7 @@ import { z } from 'zod'
 import { EventsSkeleton } from '@/components/stocks/events-skeleton'
 import { Events } from '@/components/stocks/events'
 import { StocksSkeleton } from '@/components/stocks/stocks-skeleton'
-import { Stocks } from '@/components/stocks/stocks'
+import {  } from '@/components/stocks/stocks'
 import { StockSkeleton } from '@/components/stocks/stock-skeleton'
 import {
   formatNumber,
@@ -35,6 +36,9 @@ import { saveChat } from '@/app/actions'
 import { SpinnerMessage, UserMessage } from '@/components/stocks/message'
 import { Chat, Message } from '@/lib/types'
 import { auth } from '@/auth'
+import { createVertex, vertex } from '@ai-sdk/google-vertex'
+import { Projects } from '@/components/projects/projects'
+import { Project } from '@/components/projects/project'
 
 async function confirmPurchase(symbol: string, price: number, amount: number) {
   'use server'
@@ -127,22 +131,30 @@ async function submitUserMessage(content: string) {
   let textNode: undefined | React.ReactNode
 
   const result = await streamUI({
-    model: openai('gpt-3.5-turbo'),
+    model: vertex("gemini-1.5-pro"), 
     initial: <SpinnerMessage />,
     system: `\
-    You are a stock trading conversation bot and you can help users buy stocks, step by step.
-    You and the user can discuss stock prices and the user can adjust the amount of stocks they want to buy, or place an order, in the UI.
-    
-    Messages inside [] means that it's a UI element or a user event. For example:
-    - "[Price of AAPL = 100]" means that an interface of the stock price of AAPL is shown to the user.
-    - "[User has changed the amount of AAPL to 10]" means that the user has changed the amount of AAPL to 10 in the UI.
-    
-    If the user requests purchasing a stock, call \`show_stock_purchase_ui\` to show the purchase UI.
-    If the user just wants the price, call \`show_stock_price\` to show the price.
-    If you want to show trending stocks, call \`list_stocks\`.
-    If you want to show events, call \`get_events\`.
-    If the user wants to sell stock, or complete another impossible task, respond that you are a demo and cannot do that.
-    
+    You are a Vercel API conversation bot and you can help users interact with Vercel's REST API, step by step.
+    You and the user can discuss various API functionalities and the user can adjust parameters or make requests through the UI.
+
+    Messages inside [] mean that it's a UI element or a user event. For example:
+    - "[User has set project ID to xyz123]" means that the user has set the project ID to xyz123 in the UI.
+    - "[User has changed deployment URL to https://example.com]" means that the user has changed the deployment URL in the UI.
+
+    If the user wants to list projects, call \`listProjects\` endpoint.
+    If the user wants to view a project details using a project name, call \`viewProject\` endpoint.
+    If the user wants to create a new project, call \`createProject\` endpoint.
+    If the user requests information about a project, call \`getProject\` endpoint.
+    If the user wants to create a new deployment, call \`createDeployment\` endpoint.
+    If the user wants to list deployments, call \`listDeployments\` endpoint.
+    If the user wants to delete a deployment, call \`deleteDeployment\` endpoint.
+    If the user wants to get usage statistics, call \`getUsage\` endpoint.
+    If the user wants to list domains, call \`listDomains\` endpoint.
+    If the user wants to create a new domain, call \`createDomain\` endpoint.
+    If the user wants to delete a domain, call \`deleteDomain\` endpoint.
+
+    If the user requests a functionality not supported by the current API, respond that you are a demo and cannot perform that action.
+
     Besides that, you can also chat with users and do some calculations if needed.`,
     messages: [
       ...aiState.get().messages.map((message: any) => ({
@@ -177,6 +189,137 @@ async function submitUserMessage(content: string) {
       return textNode
     },
     tools: {
+      //Listproject is a tool that lists all the projects of vercel dashboard using the endpoint https://api.vercel.com/v9/projects?deprecated=true&edgeConfigId=SOME_STRING_VALUE&edgeConfigTokenId=SOME_STRING_VALUE&excludeRepos=SOME_STRING_VALUE&from=SOME_STRING_VALUE&gitForkProtection=1&limit=SOME_STRING_VALUE&repo=SOME_STRING_VALUE&repoId=SOME_STRING_VALUE&repoUrl=https://github.com/vercel/next.js&search=SOME_STRING_VALUE&slug=SOME_STRING_VALUE&teamId=SOME_STRING_VALUE"
+      listProjects:{
+        description: 'List all the projects of vercel dashboard.',
+        parameters: z.object({
+        }),
+        generate: async function* () {
+          yield (
+            <BotCard>
+              <StockSkeleton />
+            </BotCard>
+          )
+
+          await sleep(1000)          
+
+          const {projects} = await fetch("https://api.vercel.com/v9/projects", {
+            "headers": {
+              "Authorization": `Bearer ${process.env.VERCEL_API_KEY}`,
+            },
+            "method": "get"
+          }).then(res => res.json())
+
+          const filter = projects.map((project: any) => ({
+            projectName: project.name,
+            domain: project.latestDeployments[0].alias[0],
+            branch: project.link.productionBranch,
+            created: project.createdAt,
+            live: project.live,
+            org: project.link.org,
+            repo: project.link.repo,
+            latest: {
+              target: project.latestDeployments[0].target,
+              message: project.latestDeployments[0].meta.githubCommitMessage,
+              time: project.latestDeployments[0].createdAt
+            }
+          }))
+
+          const filteredProjects = filter.filter((project: any) => !project.projectName.includes('backend'))
+          
+          const toolCallId = nanoid()
+
+          return (
+            <BotCard>
+              <Projects props={filteredProjects} />
+            </BotCard>
+          )
+        }
+      },
+      viewProject:{
+        description: 'View a project using the project name.',
+        parameters: z.object({
+          projectName: z.string().describe('The name of the project to view.')
+        }),
+        generate: async function* ({ projectName }) {
+          console.log("here", projectName);
+          
+          const toolCallId = nanoid()
+
+          const response = await fetch(`https://api.vercel.com/v9/projects/${projectName}`, {
+            "headers": {
+              "Authorization": `Bearer ${process.env.VERCEL_API_KEY}`,
+            },
+            "method": "get"
+          }).then(res => res.json())
+
+          interface target {
+            domains: string[]
+            build: string
+            git: {
+                author: string
+                sha: string
+                branch: string
+                message: string
+            }
+        }
+
+        console.log(response);
+
+          const production = response.targets?.production ? 
+            {
+              domains: response.targets.production.alias,
+              build: response.targets.production.build,
+              git: {
+                author: response.targets.production.meta.githubCommitAuthorName,
+                sha: response.targets.production.meta.githubCommitSha,
+                branch: response.targets.production.meta.githubCommitRef,
+                message: response.targets.production.meta.githubCommitMessage
+              }
+            }
+          :{}
+
+          const preview = response.targets?.preview ? 
+            {
+              domains: response.targets.preview.alias,
+              build: response.targets.preview.build,
+              git: {
+                author: response.targets.preview.meta.githubCommitAuthorName,
+                sha: response.targets.preview.meta.githubCommitSha,
+                branch: response.targets.preview.meta.githubCommitRef,
+                message: response.targets.preview.meta.githubCommitMessage
+              }
+            }
+          :{}
+
+          console.log(production);
+          
+
+          const project = {
+            projectName: response.name,
+            nodeVersion: response.nodeVersion,
+            live: response.live,
+            private: response.latestDeployments[0].private,
+            plan: response.latestDeployments[0].plan,
+            host: response.link.type,
+            branch: response.link.productionBranch,
+            created: response.createdAt,
+            updated: response.updatedAt,
+            org: response.link.org,
+            repo: response.link.repo,
+            target:{
+                production,
+                preview,
+            }
+          }
+
+          return (
+            <BotCard>
+              <Project props={project} />
+            </BotCard>
+          )
+        }
+      },
       listStocks: {
         description: 'List three imaginary stocks that are trending.',
         parameters: z.object({
@@ -307,7 +450,7 @@ async function submitUserMessage(content: string) {
             .describe(
               'The name or symbol of the stock or currency. e.g. DOGE/AAPL/USD.'
             ),
-          price: z.number().describe('The price of the stock.'),
+          price: z.number().describe('The price of the stock mentioned by the user in the prompt.'),
           numberOfShares: z
             .number()
             .optional()
